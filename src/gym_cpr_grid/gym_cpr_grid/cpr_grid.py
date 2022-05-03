@@ -28,8 +28,10 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
     GRID_CELL_COLORS = {
         utils.GridCell.OUTSIDE: "gold",
         utils.GridCell.EMPTY: "black",
-        utils.GridCell.RESOURCE: "green",
-        utils.GridCell.AGENT: "red",
+        utils.GridCell.APPLES: "red",
+        utils.GridCell.ORANGES: "orange",
+        utils.GridCell.AGENT_TYPE_1: "magenta",
+        utils.GridCell.AGENT_TYPE_2: "cyan",
         utils.GridCell.ORIENTATION: "silver",
     }
     FOV_OWN_AGENT_COLOR = "blue"
@@ -46,7 +48,8 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
 
     def __init__(
         self,
-        n_agents,
+        n_apple_agents,
+        n_orange_agents,
         grid_width,
         grid_height,
         fov_squares_front=20,
@@ -78,7 +81,9 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
         super(CPRGridEnv, self).__init__()
 
         # Parameters
-        self.n_agents = n_agents
+        self.n_agents = n_apple_agents + n_orange_agents
+        self.n_apple_agents = n_apple_agents
+        self.n_orange_agents = n_orange_agents
         self.grid_width = grid_width
         self.grid_height = grid_height
         self.fov_squares_front = fov_squares_front
@@ -158,27 +163,37 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
         """
         # Reset variables
         self.elapsed_steps = 0
-        self.agent_positions = [self._random_position() for _ in range(self.n_agents)]
+        # self.agent_positions = [self._random_position() for _ in range(self.n_apple_agents)]
+        flag = True
+        counter = 0
+        self.agent_positions = []
+        while flag:
+            random_pos = self._random_position()
+            if random_pos not in self.agent_positions:
+                self.agent_positions.append(random_pos)
+                counter += 1
+            if counter == (self.n_orange_agents + self.n_apple_agents):
+                flag = False
         self._initial_grid = self._get_initial_grid()
         self.grid = self._initial_grid.copy()
         self.tagged_agents = dict()
         self.tagging_history = [dict(self.tagged_agents)]
-        self.collected_resources = {h: 0 for h in range(self.n_agents)}
-        self.rewards_history = {h: [] for h in range(self.n_agents)}
+        self.collected_resources = {h: 0 for h in range(self.n_apple_agents + self.n_orange_agents)}
+        self.rewards_history = {h: [] for h in range(self.n_apple_agents + self.n_orange_agents)}
 
         # Initialize gifting budget based on the chosen gifting mechanism
         if self.gifting_mechanism == utils.GiftingMechanism.ZERO_SUM:
-            self.gifting_budget = {h: np.inf for h in range(self.n_agents)}
+            self.gifting_budget = {h: np.inf for h in range(self.n_apple_agents)}
         elif self.gifting_mechanism == utils.GiftingMechanism.FIXED_BUDGET:
             self.gifting_budget = {
-                h: self.gifting_fixed_budget_size for h in range(self.n_agents)
+                h: self.gifting_fixed_budget_size for h in range(self.n_apple_agents)
             }
         else:
-            self.gifting_budget = {h: 0 for h in range(self.n_agents)}
+            self.gifting_budget = {h: 0 for h in range(self.n_apple_agents)}
 
         # Compute observations for each agent
-        observations = {h: None for h in range(self.n_agents)}
-        for agent_handle in range(self.n_agents):
+        observations = {h: None for h in range(self.n_apple_agents + self.n_orange_agents)}
+        for agent_handle in range(self.n_apple_agents + self.n_orange_agents):
             observations[agent_handle] = self._get_observation(agent_handle)
 
         return observations
@@ -200,10 +215,23 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
         """
         # Assign agent positions in the grid
         grid = np.full((self.grid_height, self.grid_width), utils.GridCell.EMPTY.value)
+        counter = 0
+        realizados = 0
         for agent_position in self.agent_positions:
-            grid[agent_position.y, agent_position.x] = utils.GridCell.AGENT.value
+            counter += 1
+            if self.n_apple_agents == counter- 1:
+                break
+            grid[agent_position.y, agent_position.x] = utils.GridCell.AGENT_TYPE_1.value
             grid = self._mark_orientation(grid, agent_position)
-
+            realizados += 1
+        counter = 0
+        realizados = 0
+        for agent_position in self.agent_positions:
+            counter += 1
+            if self.n_apple_agents < counter:
+                grid[agent_position.y, agent_position.x] = utils.GridCell.AGENT_TYPE_2.value
+                grid = self._mark_orientation(grid, agent_position)
+                realizados += 1
         # Compute initial resources
         resource_mask = np.random.binomial(
             1,
@@ -213,11 +241,28 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
         ys, xs = resource_mask.nonzero()
         resource_indices = list(zip(list(xs), list(ys)))
 
+        total_len = len(resource_indices)//2
         # Assign resources to cells that are not occupied by agents
+        apple_counter = 0
+        orange_counter = 0
         for x, y in resource_indices:
-            if grid[y, x] == utils.GridCell.EMPTY.value:
-                grid[y, x] = utils.GridCell.RESOURCE.value
-
+            if (apple_counter <= total_len) and (orange_counter <= total_len):
+                if grid[y, x] == utils.GridCell.EMPTY.value:
+                    val = random.randint(0, 1)
+                    if val == 0:
+                        grid[y, x] = utils.GridCell.APPLES.value
+                        apple_counter += 1
+                    else:
+                        grid[y, x] = utils.GridCell.ORANGES.value
+                        orange_counter += 1
+            elif (apple_counter <= total_len) and (orange_counter == total_len):
+                if grid[y, x] == utils.GridCell.EMPTY.value:
+                    grid[y, x] = utils.GridCell.APPLES.value
+                    apple_counter += 1
+            elif (apple_counter == total_len) and (orange_counter <= total_len):
+                if grid[y, x] == utils.GridCell.EMPTY.value:
+                    grid[y, x] = utils.GridCell.ORANGES.value
+                    orange_counter += 1
         return grid
 
     def _mark_orientation(self, grid, agent_position, remove=False):
@@ -345,7 +390,7 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
             legal_actions[utils.AgentAction.STEP_RIGHT.value] = False
 
         # Disable tagging when not enabled by the user or when only playing with one agent
-        if not self.tagging_ability or self.n_agents == 1:
+        if not self.tagging_ability or self.n_apple_agents == 1:
             legal_actions[utils.AgentAction.TAG.value] = False
 
         # Disable the gifting action when not enabled by the user
@@ -353,7 +398,7 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
         if (
             self.gifting_mechanism is None
             or self.gifting_budget[agent_handle] <= 0
-            or self.n_agents == 1
+            or self.n_apple_agents == 1
         ):
             legal_actions[utils.AgentAction.GIFT.value] = False
 
@@ -365,14 +410,14 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
         and return one observation for each agent
         """
         assert (
-            isinstance(action_dict, dict) and len(action_dict) == self.n_agents
+            isinstance(action_dict, dict) and (len(action_dict) == (self.n_apple_agents + self.n_orange_agents))
         ), "Actions should be given as a dictionary with lenght equal to the number of agents"
 
         # Initialize variables
-        observations = {h: None for h in range(self.n_agents)}
-        rewards = {h: 0 for h in range(self.n_agents)}
-        dones = {h: False for h in range(self.n_agents)}
-        infos = {h: dict() for h in range(self.n_agents)}
+        observations = {h: None for h in range(self.n_apple_agents + self.n_orange_agents)}
+        rewards = {h: 0 for h in range(self.n_apple_agents + self.n_orange_agents)}
+        dones = {h: False for h in range(self.n_apple_agents + self.n_orange_agents)}
+        infos = {h: dict() for h in range(self.n_apple_agents + self.n_orange_agents)}
 
         # Move all agents
         tagged_agents, gifting_agents, gifted_agents = [], [], []
@@ -387,9 +432,21 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
                 )
 
                 # Assign reward for resource collection
-                if self._has_resource(new_agent_position):
-                    self.collected_resources[agent_handle] += 1
-                    rewards[agent_handle] += self.RESOURCE_COLLECTION_REWARD
+                if self._has_resource_apple(new_agent_position):
+                    if agent_handle >= self.n_apple_agents:
+                        self.collected_resources[agent_handle] += 1
+                        rewards[agent_handle] += self.RESOURCE_COLLECTION_REWARD
+                    else:
+                        self.collected_resources[agent_handle] += .2
+                        rewards[agent_handle] += self.RESOURCE_COLLECTION_REWARD
+                    
+                if self._has_resource_orange(new_agent_position):
+                    if agent_handle >= self.n_apple_agents:
+                        self.collected_resources[agent_handle] += .2
+                        rewards[agent_handle] += self.RESOURCE_COLLECTION_REWARD
+                    else:
+                        self.collected_resources[agent_handle] += 1
+                        rewards[agent_handle] += self.RESOURCE_COLLECTION_REWARD
 
                 # Move the agent only after checking for resource presence
                 self._move_agent(agent_handle, new_agent_position)
@@ -433,7 +490,7 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
 
         # Store the tagged agents and free the ones that were
         # tagged more than the specified timesteps ago
-        for agent_handle in range(self.n_agents):
+        for agent_handle in range(self.n_apple_agents + self.n_orange_agents):
             if agent_handle in self.tagged_agents:
                 self.tagged_agents[agent_handle] -= 1
                 if self.tagged_agents[agent_handle] == 0:
@@ -443,7 +500,7 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
 
         # Fill-up the infos dictionary with extra information
         self.tagging_history += [dict(self.tagged_agents)]
-        for agent_handle in range(self.n_agents):
+        for agent_handle in range(self.n_apple_agents + self.n_orange_agents):
             # Add tagging information
             tagged = agent_handle in self.tagged_agents
             infos[agent_handle]["tagged"] = tagged
@@ -463,11 +520,11 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
             self._is_resource_depleted()
             or self.elapsed_steps == self._max_episode_steps
         ):
-            dones = {h: True for h in range(self.n_agents)}
+            dones = {h: True for h in range(self.n_apple_agents + self.n_orange_agents)}
             dones["__all__"] = True
 
         # Compute observations for each agent and store rewards history
-        for agent_handle in range(self.n_agents):
+        for agent_handle in range(self.n_apple_agents + self.n_orange_agents):
             observations[agent_handle] = self._get_observation(agent_handle)
             self.rewards_history[agent_handle].append(rewards[agent_handle])
 
@@ -486,7 +543,7 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
         the given action
         """
         assert agent_handle in range(
-            self.n_agents
+            (self.n_apple_agents + self.n_orange_agents)
         ), "The given agent handle does not exist"
 
         # Compute new position
@@ -509,7 +566,10 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
         current_position = self.agent_positions[agent_handle]
         self.grid[current_position.y, current_position.x] = utils.GridCell.EMPTY.value
         self.grid = self._mark_orientation(self.grid, current_position, remove=True)
-        self.grid[new_position.y, new_position.x] = utils.GridCell.AGENT.value
+        if agent_handle >= self.n_apple_agents:
+            self.grid[new_position.y, new_position.x] = utils.GridCell.AGENT_TYPE_2.value
+        else:
+            self.grid[new_position.y, new_position.x] = utils.GridCell.AGENT_TYPE_1.value
         self.grid = self._mark_orientation(self.grid, new_position)
         self.agent_positions[agent_handle] = new_position
 
@@ -530,7 +590,7 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
         assert isinstance(
             position, utils.AgentPosition
         ), "The given position should be an instance of AgentPosition"
-        return self.grid[position.y, position.x] == utils.GridCell.AGENT.value
+        return (self.grid[position.y, position.x] == utils.GridCell.AGENT_TYPE_1.value) or (self.grid[position.y, position.x] == utils.GridCell.AGENT_TYPE_2.value)
 
     def _is_position_in_grid(self, position):
         """
@@ -545,21 +605,30 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
             return False
         return True
 
-    def _has_resource(self, position):
+    def _has_resource_apple(self, position):
         """
         Check if the given position is occupied by a resource in the grid
         """
         assert isinstance(
             position, utils.AgentPosition
         ), "The given position should be an instance of utils.AgentPosition"
-        return self.grid[position.y, position.x] == utils.GridCell.RESOURCE.value
+        return self.grid[position.y, position.x] == utils.GridCell.APPLES.value
+    
+    def _has_resource_orange(self, position):
+        """
+        Check if the given position is occupied by a resource in the grid
+        """
+        assert isinstance(
+            position, utils.AgentPosition
+        ), "The given position should be an instance of utils.AgentPosition"
+        return self.grid[position.y, position.x] == utils.GridCell.ORANGES.value
 
     def _is_resource_depleted(self):
         """
         Check if there is at least one resource available in the environment
         or if the resource is depleted
         """
-        return len(self.grid[self.grid == utils.GridCell.RESOURCE.value]) == 0
+        return (len(self.grid[self.grid == utils.GridCell.APPLES.value]) == 0) and len(self.grid[self.grid == utils.GridCell.ORANGES.value]) == 0 
 
     def _agents_in_beam_trajectory(self, agent_handle):
         """
@@ -593,15 +662,21 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
 
         # Set color for resources
         fov = np.where(
-            fov == utils.GridCell.RESOURCE,
-            colors.to_rgb(self.GRID_CELL_COLORS[utils.GridCell.RESOURCE]),
+            fov == utils.GridCell.APPLES,
+            colors.to_rgb(self.GRID_CELL_COLORS[utils.GridCell.APPLES]),
             fov,
         )
 
         # Set color for opponents
         fov = np.where(
-            fov == utils.GridCell.AGENT,
-            colors.to_rgb(self.GRID_CELL_COLORS[utils.GridCell.AGENT]),
+            fov == utils.GridCell.AGENT_TYPE_1,
+            colors.to_rgb(self.GRID_CELL_COLORS[utils.GridCell.AGENT_TYPE_1]),
+            fov,
+        )
+
+        fov = np.where(
+            fov == utils.GridCell.AGENT_TYPE_2,
+            colors.to_rgb(self.GRID_CELL_COLORS[utils.GridCell.AGENT_TYPE_2]),
             fov,
         )
 
@@ -646,13 +721,23 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
         for x, y in itertools.product(range(self.grid_width), range(self.grid_height)):
             if (
                 self.grid[y, x] == utils.GridCell.EMPTY.value
-                and self._initial_grid[y, x] == utils.GridCell.RESOURCE.value
+                and self._initial_grid[y, x] == utils.GridCell.APPLES.value
             ):
                 ball = self._extract_ball(x, y)
-                l = len(ball[ball == utils.GridCell.RESOURCE.value])
+                l = len(ball[ball == utils.GridCell.APPLES.value])
                 p = self._respawn_probability(l)
                 if np.random.binomial(1, p):
-                    self.grid[y, x] = utils.GridCell.RESOURCE.value
+                    self.grid[y, x] = utils.GridCell.APPLES.value
+            if (
+                self.grid[y, x] == utils.GridCell.EMPTY.value
+                and self._initial_grid[y, x] == utils.GridCell.ORANGES.value
+            ):
+                ball = self._extract_ball(x, y)
+                l = len(ball[ball == utils.GridCell.ORANGES.value])
+                p = self._respawn_probability(l)
+                if np.random.binomial(1, p):
+                    self.grid[y, x] = utils.GridCell.ORANGES.value
+
 
     def _respawn_probability(self, l):
         """
@@ -797,7 +882,7 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
         Compute the sum of historical rewards for each agent
         """
         returns = []
-        for agent_handle in range(self.n_agents):
+        for agent_handle in range(self.n_apple_agents):
             returns += [np.sum(self.rewards_history[agent_handle])]
         return returns
 
@@ -816,7 +901,7 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
         """
         returns = self._get_returns()
         numerator = np.sum([abs(ri - rj) for ri in returns for rj in returns])
-        return 1 - (numerator / (2 * self.n_agents * np.sum(returns) + 1e-6))
+        return 1 - (numerator / (2 * self.n_apple_agents * np.sum(returns) + 1e-6))
 
     def sustainability_metric(self):
         """
@@ -824,7 +909,7 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
         time at which the rewards are collected
         """
         times = []
-        for agent_handle in range(self.n_agents):
+        for agent_handle in range(self.n_apple_agents):
             rewards = self.rewards_history[agent_handle]
             ti = np.argwhere(np.array(rewards) > 0)
             if len(ti) != 0:
@@ -839,14 +924,14 @@ class CPRGridEnv(MultiAgentEnv, gym.Env):
         if not self.tagging_ability:
             return np.nan
         total = 0
-        for agent_handle in range(self.n_agents):
+        for agent_handle in range(self.n_apple_agents):
             total += np.sum(
                 [
                     int(agent_handle in tagging_checkpoint)
                     for tagging_checkpoint in self.tagging_history
                 ]
             )
-        return (self.n_agents * self.elapsed_steps - total) / self.n_agents
+        return (self.n_apple_agents * self.elapsed_steps - total) / self.n_apple_agents
 
     def get_social_outcome_metrics(self):
         """

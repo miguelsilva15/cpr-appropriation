@@ -280,9 +280,11 @@ class GridCell(CustomIntEnum):
 
     OUTSIDE = -1
     EMPTY = 0
-    RESOURCE = 1
-    AGENT = 2
-    ORIENTATION = 3
+    APPLES = 1
+    ORANGES = 2
+    AGENT_TYPE_1 = 3
+    AGENT_TYPE_2 = 4
+    ORIENTATION = 5
 
 
 class GiftingMechanism(CustomIntEnum):
